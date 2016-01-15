@@ -1,0 +1,173 @@
+---
+title: "Practical Machine Learning Prediction Assignment Write up"
+author: "Kyle Day"
+date: "January 13, 2016"
+output: html_document
+---
+In this project we will use data from accelerometers on the belt, forearm, arm, and dumbell of 6 participants. They were asked to perform barbell lifts correctly and incorrectly in 5 different ways.We are presented with a training data set with just under 20,000 observations of 160 variables and there classifications from A to E. We were also giving a set of 20 observations with no classifications. The goal is to create a model which is able to correctly predict the outcome of these 20 observations.
+
+More details on the data set here: http://groupware.les.inf.puc-rio.br/har
+
+###Set working directory
+```{r}
+setwd("C:/R_Projects/MachLearn")
+```
+
+###Packages needed
+```{r}
+library(caret)
+```
+
+###Loading Data
+
+```{r}
+finaltest <- read.csv("pml-testing.csv", header=T, na.strings=c("NA", "#DIV/0!", ""))
+
+training <- read.csv("pml-training.csv", header=T, na.strings=c("NA", "#DIV/0!", ""))
+```
+
+After the first load it is clear that we need to treat both blanks and "#DIV/0!" as NA
+
+
+###Slicing our data
+
+The first thing we need to do is split our data. We already have a separate testing set.However we will still split the training set and then use the original testing set as a little bit of extra validation. 
+
+We will use set.seed to make sure our model is created off of the same subset of training data if we run this process multiple times. Failure to do this will cause your subtrain and subtest data sets to vary and there for will give you a different model if you were to repeat this process.
+```{r}
+set.seed(1111)
+
+inTrain <- createDataPartition(y = training$classe, p = 0.6, list = F) 
+
+subtrain <- training[inTrain, ]
+    
+subtest <- training[-inTrain, ]
+```
+
+We will need to redo everything done to the subtrain to the subtest and like wise to the final testing set which we will use at the end for extra validation. It may be tempting to preform these modifications to all sets at the same time or before splitting, but this might lead to over fitting as you adjust your models from visual inspections along the way. Splitting now is the correct way to do it to avoid any influence the test set might have on training our model.
+
+###Inspecting the Data
+
+We see from "summary(subtrain)" that many of the variables are mostly NA values.We need to remove these variables. Had there been one variable which held a meaningful number of records we would need to consider whether to include it. For the data we have here those with "NA's" are almost entirely "NA" and there for will provide little insight. 
+
+```{r}
+#summary(subtrain)
+subtrain <- subtrain[, colSums(is.na(subtrain)) == 0]
+
+ncol(subtrain) 
+```
+
+We now have 60 variables to consider.
+
+####Removing Non-variable Covariates
+
+After looking at our new list we see that the first 7 will not provide meaningful insight.We will also look to see if any of the remainder lack variation.
+
+```{r}
+subtrain <- subtrain[ , 8:(ncol(subtrain))]
+
+nsv <- nearZeroVar(subtrain, saveMetrics = T)
+
+nsv
+```
+
+All of the remaining variables are variable.
+
+
+###Creating Our Model(s)
+
+There are five possible outcomes. We will need a Random Forest from either "rf" or "rpart". Let's test both and predict the out of sample error rate and accuracy to make the final decision. 
+
+####RF
+
+As most of you probably discovered, if you fail to use a control then the boot strapping used by default tends to take forever and a day. 
+
+```{r}
+set.seed(1111)
+
+trcontrol <- trainControl(allowParallel=T, method = "cv", number = 5)
+modelfit <- train(classe ~ ., data=subtrain, model = "rf", trControl = trcontrol)
+
+plot(modelfit$finalModel)
+print(modelfit$finalModel)
+modelfit
+
+#varImpPlot(modelfit$finalModel)
+
+#getTree(modelfit$finalModel, k=23)
+```
+
+####RPart
+
+```{r}
+set.seed(1111)
+
+modelfit2 <- train(classe ~ ., data=subtrain, model = "rpart", trControl = trcontrol)
+
+print(modelfit2$finalModel)
+plot(modelfit2$finalModel)
+modelfit2
+```
+
+####Model Choice
+
+"rpart" OOB estimate of  error rate: 1.02%
+
+"rf" OOB estimate of  error rate: 1.02%
+
+
+It is important that we look at these **estimated** out of sample error rates to determine which to use. If we were to measure the actual out of sample error rate using our subtest data set to make our choice then we would be unable to get an accurate measure of our out of sample error rate later. This would be because we used a result from the (sub)test set to make our model choice and our actual test set is only 20 observations, not enough for an accurate out of sample error rate. 
+
+Though they have the same OOB, the "rpart" method took much longer than the "rf" method. We will use the "rf" method.
+
+###Evaluating our Model
+
+We need to first format our subtest to the same format as our subtrain.
+
+```{r}
+subtest <- subtest[, colSums(is.na(subtest)) == 0]
+
+#ncol(subtest) #summary(subtest)
+#This makes the assumption that the columns with NA's in the train also
+# are the column with NA's in the test. Here that holds.
+
+subtest <- subtest[ , 8:(ncol(subtest))]
+```
+
+Next we see how our model does.
+
+```{r}
+outcome <- predict(modelfit, newdata=subtest)
+
+cm <- confusionMatrix(subtest$classe, outcome)
+cm
+
+outcomeacc <- sum(outcome == subtest$classe) / length(outcome) *100
+#gives us our accuracy, although it was shown above in cm
+
+```
+
+`r outcomeacc` accuracy is what we expected and isn't bad.
+
+###Predict 20 Observation test set
+
+```{r}
+finaltest <- finaltest[, colSums(is.na(finaltest)) == 0]
+
+#ncol(finaltest) #summary(finaltest)
+#This makes the assumption that the columns with NA's in the train also
+# are the column with NA's in the test. Here that holds.
+
+finaltest <- finaltest[ , 8:(ncol(finaltest))]
+
+testoutcome <- predict(modelfit, newdata = finaltest)
+testoutcome
+```
+
+All 20 match!
+
+Data for this project comes from:
+
+Velloso, E.; Bulling, A.; Gellersen, H.; Ugulino, W.; Fuks, H. Qualitative Activity Recognition of Weight Lifting Exercises. Proceedings of 4th International Conference in Cooperation with SIGCHI (Augmented Human '13) . Stuttgart, Germany: ACM SIGCHI, 2013.
+
+Read more: http://groupware.les.inf.puc-rio.br/har#ixzz3xGsCqX5w
